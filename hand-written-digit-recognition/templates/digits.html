@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Nhận dạng chữ số viết tay</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #f0f2f5;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 30px;
+    }
+    h1 { color: #333; }
+    .container {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    canvas {
+        border: 2px solid #444;
+        border-radius: 8px;
+        background: #000;
+        cursor: crosshair;
+        touch-action: none;
+    }
+    .controls {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+    }
+    button {
+        padding: 10px 20px;
+        font-size: 15px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+    #predictBtn { background: #1976d2; color: white; }
+    #predictBtn:hover { background: #115293; }
+    #clearBtn { background: #e0e0e0; color: #333; }
+    #clearBtn:hover { background: #c7c7c7; }
+    .result {
+        margin-top: 20px;
+        font-size: 22px;
+        font-weight: bold;
+        color: #1976d2;
+        min-height: 30px;
+    }
+    .prob-bars {
+        margin-top: 15px;
+        display: grid;
+        grid-template-columns: repeat(10, 1fr);
+        gap: 4px;
+    }
+    .bar-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        font-size: 12px;
+    }
+    .bar {
+        width: 22px;
+        height: 100px;
+        background: #e0e0e0;
+        border-radius: 4px;
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+    }
+    .bar-fill {
+        width: 100%;
+        background: #4caf50;
+        border-radius: 4px;
+        transition: height 0.3s;
+    }
+    .bar-fill.top { background: #f44336; }
+</style>
+</head>
+<body>
+    <h1>🔢 Nhận dạng chữ số viết tay</h1>
+    <div class="container">
+        <p>Vẽ một chữ số (0–9) vào khung bên dưới:</p>
+        <canvas id="canvas" width="280" height="280"></canvas>
+        <div class="controls">
+            <button id="predictBtn">Nhận dạng</button>
+            <button id="clearBtn">Xóa</button>
+        </div>
+        <div class="result" id="result">Kết quả: —</div>
+        <div class="prob-bars" id="probBars"></div>
+    </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let drawing = false;
+
+// Nền đen, nét trắng (giống MNIST)
+ctx.fillStyle = 'black';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.strokeStyle = 'white';
+ctx.lineWidth = 22;
+ctx.lineCap = 'round';
+ctx.lineJoin = 'round';
+
+function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    return {
+        x: x * (canvas.width / rect.width),
+        y: y * (canvas.height / rect.height)
+    };
+}
+
+function start(e) {
+    e.preventDefault();
+    drawing = true;
+    const p = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+}
+
+function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = getPos(e);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+}
+
+function end(e) { drawing = false; }
+
+canvas.addEventListener('mousedown', start);
+canvas.addEventListener('mousemove', move);
+canvas.addEventListener('mouseup', end);
+canvas.addEventListener('mouseleave', end);
+canvas.addEventListener('touchstart', start, {passive: false});
+canvas.addEventListener('touchmove', move, {passive: false});
+canvas.addEventListener('touchend', end);
+
+document.getElementById('clearBtn').onclick = () => {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    document.getElementById('result').textContent = 'Kết quả: —';
+    document.getElementById('probBars').innerHTML = '';
+};
+
+document.getElementById('predictBtn').onclick = async () => {
+    const dataURL = canvas.toDataURL('image/png');
+    const resultEl = document.getElementById('result');
+    resultEl.textContent = 'Đang nhận dạng...';
+
+    try {
+        const resp = await fetch('/predict', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({image: dataURL})
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            resultEl.textContent = '❌ Lỗi: ' + (data.error || 'Không xác định');
+            return;
+        }
+
+        resultEl.textContent = `Kết quả: ${data.prediction}  (độ tin cậy: ${data.confidence}%)`;
+
+        const barsEl = document.getElementById('probBars');
+        barsEl.innerHTML = '';
+        const maxP = Math.max(...data.probabilities);
+        data.probabilities.forEach((p, i) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'bar-wrap';
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            const fill = document.createElement('div');
+            fill.className = 'bar-fill' + (p === maxP ? ' top' : '');
+            fill.style.height = Math.max(2, p) + '%';
+            bar.appendChild(fill);
+            const label = document.createElement('div');
+            label.textContent = i;
+            wrap.appendChild(bar);
+            wrap.appendChild(label);
+            barsEl.appendChild(wrap);
+        });
+    } catch (err) {
+        resultEl.textContent = '❌ Lỗi kết nối: ' + err.message;
+    }
+};
+</script>
+</body>
+</html>
